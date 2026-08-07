@@ -28,16 +28,19 @@ def simulate(config: TwinConfig, plan: OperatingPlan, days: int = 60, seed: int 
         pi = config.base_productivity_bpd_per_kpa * mobility
         inflow = pi * max(pressure - config.tubing_head_pressure_kpa, 0.0)
         pump_capacity = config.pump_capacity_factor * plan.srp_spm * plan.stroke_m * 100.0
-        production = min(inflow, pump_capacity) * plan.uptime
+        # Synthetic artificial-lift health proxies. They are not measured fillage or failure data.
+        fillage = float(np.clip(1.0 - (viscosity / 12_000.0) * (plan.srp_spm / 8.0), 0.15, 1.0))
+        stress_index = float(np.clip((1.0 - fillage) * (plan.srp_spm / 6.0) * (plan.stroke_m / 2.5), 0.0, 1.0))
+        production = min(inflow, pump_capacity * fillage) * plan.uptime
         if add_noise:
             production *= max(0.0, 1 + rng.normal(0, 0.035))
         pressure -= config.reservoir_depletion_kpa_per_bbl * production
         steam_cost = steam * config.steam_energy_cost_per_tonne
         net = production * (config.oil_value_per_bbl - config.lifting_cost_per_bbl) - steam_cost
-        records.append({"day": day, "steam_on": steam_on, "steam_rate_tpd": steam, "reservoir_temp_c": temp, "reservoir_pressure_kpa": pressure, "viscosity_cp": viscosity, "mobility_multiplier": mobility, "productivity_index": pi, "inflow_bpd": inflow, "pump_capacity_bpd": pump_capacity, "production_bpd": production, "srp_spm": plan.srp_spm, "stroke_m": plan.stroke_m, "steam_cost": steam_cost, "net_value_per_day": net})
+        records.append({"day": day, "steam_on": steam_on, "steam_rate_tpd": steam, "reservoir_temp_c": temp, "reservoir_pressure_kpa": pressure, "viscosity_cp": viscosity, "mobility_multiplier": mobility, "productivity_index": pi, "inflow_bpd": inflow, "pump_capacity_bpd": pump_capacity, "fillage_proxy": fillage, "stress_index": stress_index, "production_bpd": production, "srp_spm": plan.srp_spm, "stroke_m": plan.stroke_m, "steam_cost": steam_cost, "net_value_per_day": net})
     return pd.DataFrame(records)
 
 
 def kpis(frame: pd.DataFrame) -> dict:
     oil = frame.production_bpd.sum()
-    return {"avg_oil_bpd": float(frame.production_bpd.mean()), "cumulative_oil_bbl": float(oil), "steam_tonnes": float(frame.steam_rate_tpd.sum()), "steam_oil_ratio_t_per_bbl": float(frame.steam_rate_tpd.sum() / max(oil, 1e-9)), "net_value": float(frame.net_value_per_day.sum()), "peak_temperature_c": float(frame.reservoir_temp_c.max())}
+    return {"avg_oil_bpd": float(frame.production_bpd.mean()), "cumulative_oil_bbl": float(oil), "steam_tonnes": float(frame.steam_rate_tpd.sum()), "steam_oil_ratio_t_per_bbl": float(frame.steam_rate_tpd.sum() / max(oil, 1e-9)), "net_value": float(frame.net_value_per_day.sum()), "peak_temperature_c": float(frame.reservoir_temp_c.max()), "avg_fillage_proxy": float(frame.fillage_proxy.mean()), "avg_stress_index": float(frame.stress_index.mean())}

@@ -22,6 +22,7 @@ class TwinConfig:
     steam_energy_cost_per_tonne: float = 3.0
     lifting_cost_per_bbl: float = 0.80
     oil_value_per_bbl: float = 65.0
+    synthetic_lift_risk_cost_per_day: float = 250.0
 
     def as_dict(self):
         return asdict(self)

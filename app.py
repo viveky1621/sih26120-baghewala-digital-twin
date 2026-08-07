@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from digital_twin.config import TwinConfig
 from digital_twin.simulator import OperatingPlan, simulate, kpis
-from digital_twin.ml import make_training_data, train_surrogate, predict, detect_anomalies, train_synthetic_risk_model, predict_synthetic_risk
+from digital_twin.ml import make_training_data, train_surrogate, predict, detect_anomalies
 from digital_twin.optimizer import optimize_plan
 
 st.set_page_config(page_title="Baghewala Digital Twin", page_icon="⚙️", layout="wide", initial_sidebar_state="expanded")
@@ -18,8 +18,7 @@ st.markdown("""<style>
 @st.cache_resource(show_spinner=False)
 def load_ai(config_items):
     config = TwinConfig(**dict(config_items))
-    production_model, quality = train_surrogate(make_training_data(config, samples=240))
-    return production_model, quality, train_synthetic_risk_model(config)
+    return train_surrogate(make_training_data(config, samples=240))
 
 
 def readiness_score():
@@ -27,6 +26,17 @@ def readiness_score():
     components = {"Data readiness": 25, "Engineering integration": 75, "Model validation": 30, "Operator workflow": 70}
     weights = {"Data readiness": 0.35, "Engineering integration": 0.25, "Model validation": 0.25, "Operator workflow": 0.15}
     return round(sum(components[key] * weights[key] for key in components)), components
+
+
+def add_synthetic_lift_proxies(frame: pd.DataFrame) -> pd.DataFrame:
+    """Portable demonstrator-only lift indicators; intentionally not field failure probabilities."""
+    out = frame.copy()
+    fillage = 1.0 - (out["viscosity_cp"] / 12_000.0) * (out["srp_spm"] / 8.0)
+    out["fillage_proxy"] = out.get("fillage_proxy", fillage.clip(0.15, 1.0))
+    stress = (1.0 - out["fillage_proxy"]) * (out["srp_spm"] / 6.0) * (out["stroke_m"] / 2.5)
+    out["stress_index"] = out.get("stress_index", stress.clip(0.0, 1.0))
+    out["synthetic_stress_risk"] = out["stress_index"].clip(0.0, 1.0)
+    return out
 
 with st.sidebar:
     st.markdown("## Control room")
@@ -45,10 +55,11 @@ with st.sidebar:
 
 config = TwinConfig()
 plan = OperatingPlan(steam, steam_days, cycle, spm, stroke, uptime)
-frame = detect_anomalies(simulate(config, plan, days=horizon))
+frame = add_synthetic_lift_proxies(detect_anomalies(simulate(config, plan, days=horizon)))
 summary = kpis(frame)
-model, quality, risk_model = load_ai(tuple(config.as_dict().items()))
-frame["synthetic_stress_risk"] = predict_synthetic_risk(risk_model, frame)
+summary.setdefault("avg_fillage_proxy", float(frame.fillage_proxy.mean()))
+summary.setdefault("avg_stress_index", float(frame.stress_index.mean()))
+model, quality = load_ai(tuple(config.as_dict().items()))
 
 st.markdown("""<div class="hero"><div class="eyebrow">SIH 26120 · HEAVY-OIL OPERATIONS DEMONSTRATOR</div><h1>Baghewala Digital Twin</h1><p>Connect CSS steam injection, reservoir response, artificial lift and production outcomes in one transparent what-if simulation.</p></div>""", unsafe_allow_html=True)
 st.warning("DEMONSTRATION MODEL — Outputs use synthetic data and simplified physics. They are not field-calibrated and must not guide live operations.")
@@ -94,7 +105,7 @@ with intelligence:
             st.markdown(f"### Recommended scenario\n**CSS:** {best.steam_rate_tpd:.1f} t/day for {best.steam_days} days every {best.cycle_length_days} days  \\n**SRP:** {best.srp_spm:.1f} spm × {best.stroke_m:.1f} m stroke · {best.uptime:.0%} uptime")
         with summary_column:
             st.metric("Optimized oil", f"{best_kpis['avg_oil_bpd']:,.1f} bpd")
-            st.metric("Risk-adjusted value", f"{best_kpis['risk_adjusted_net_value']:,.0f}")
+            st.metric("Risk-adjusted value", f"{best_kpis.get('risk_adjusted_net_value', best_kpis['net_value']):,.0f}")
 
 with readiness:
     score, components = readiness_score()

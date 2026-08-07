@@ -12,7 +12,7 @@ st.markdown("""<style>
 .stApp{background:radial-gradient(circle at 15% 0%,#172e45 0,#09131f 42%,#061018 100%)}
 [data-testid="stSidebar"]{background:#0c1d2b;border-right:1px solid #254359} h1,h2,h3{color:#f4fbff!important}
 .hero{padding:1.6rem 1.8rem;border:1px solid #2f718c;border-radius:18px;background:linear-gradient(110deg,#102d43,#0e4b61);margin-bottom:1rem}.eyebrow{color:#7fe4df;font-weight:700;letter-spacing:.1em;font-size:.75rem}.hero p{color:#d1e6ee;margin-bottom:0;font-size:1.02rem}
-[data-testid="stMetric"]{background:rgba(15,45,62,.82);border:1px solid #24526b;border-radius:14px;padding:13px}.stButton>button{background:#17b6a4;color:#03151a;border:0;border-radius:9px;font-weight:700;width:100%}.stButton>button:hover{background:#63ddd1;color:#03151a}
+.metric-card,.model-card,.feasibility-card{background:linear-gradient(165deg,#132638,#0f1f2e);border:1px solid #1e4a61;border-radius:14px;padding:15px;min-height:118px}.metric-label{color:#93b6c6;font-size:.78rem}.metric-value{font-size:1.75rem;font-weight:700;margin:6px 0}.metric-unit{font-size:.8rem;color:#9ab0bb;font-weight:400}.badge{display:inline-block;border-radius:20px;padding:4px 8px;font-size:.72rem;font-weight:700}.green{background:rgba(62,207,142,.17);color:#3ecf8e}.red{background:rgba(255,107,91,.17);color:#ff8072}.amber{background:rgba(240,166,58,.17);color:#f0b45a}.model-tag{display:inline-block;border-radius:5px;padding:3px 8px;font-size:.68rem;font-weight:800;margin-bottom:8px}.model-card{min-height:180px}.model-card p,.feasibility-card p{color:#a9c0cb;font-size:.85rem;line-height:1.5}.stButton>button{background:#17b6a4;color:#03151a;border:0;border-radius:9px;font-weight:700;width:100%}.stButton>button:hover{background:#63ddd1;color:#03151a}
 </style>""", unsafe_allow_html=True)
 
 @st.cache_resource(show_spinner=False)
@@ -37,6 +37,12 @@ def add_synthetic_lift_proxies(frame: pd.DataFrame) -> pd.DataFrame:
     out["stress_index"] = out.get("stress_index", stress.clip(0.0, 1.0))
     out["synthetic_stress_risk"] = out["stress_index"].clip(0.0, 1.0)
     return out
+
+
+def metric_card(label: str, value: float, unit: str, favorable: bool, note: str) -> str:
+    tone = "green" if favorable else "red"
+    arrow = "↑ favorable direction" if favorable else "↓ lower is better"
+    return f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value:,.1f}<span class="metric-unit"> {unit}</span></div><span class="badge {tone}">{arrow}</span><div class="metric-label" style="margin-top:8px">{note}</div></div>'
 
 with st.sidebar:
     st.markdown("## Control room")
@@ -64,9 +70,18 @@ model, quality = load_ai(tuple(config.as_dict().items()))
 st.markdown("""<div class="hero"><div class="eyebrow">SIH 26120 · HEAVY-OIL OPERATIONS DEMONSTRATOR</div><h1>Baghewala Digital Twin</h1><p>Connect CSS steam injection, reservoir response, artificial lift and production outcomes in one transparent what-if simulation.</p></div>""", unsafe_allow_html=True)
 st.warning("DEMONSTRATION MODEL — Outputs use synthetic data and simplified physics. They are not field-calibrated and must not guide live operations.")
 
-metrics = [("Average oil", summary["avg_oil_bpd"], "bpd"), ("Cumulative oil", summary["cumulative_oil_bbl"], "bbl"), ("Steam–oil ratio", summary["steam_oil_ratio_t_per_bbl"], "t/bbl"), ("Peak temperature", summary["peak_temperature_c"], "°C"), ("Fillage proxy", summary["avg_fillage_proxy"] * 100, "%"), ("Stress proxy", summary["avg_stress_index"] * 100, "%")]
-for column, (name, value, unit) in zip(st.columns(6), metrics):
-    column.metric(name, f"{value:,.1f}", unit)
+metrics = [
+    ("Average oil", summary["avg_oil_bpd"], "bpd", True, "synthetic production"),
+    ("Cumulative oil", summary["cumulative_oil_bbl"], "bbl", True, "over selected horizon"),
+    ("Steam–oil ratio", summary["steam_oil_ratio_t_per_bbl"], "t/bbl", False, "efficiency: lower is better"),
+    ("Peak temperature", summary["peak_temperature_c"], "°C", True, "thermal response proxy"),
+    ("Fillage proxy", summary["avg_fillage_proxy"] * 100, "%", True, "synthetic lift indicator"),
+    ("Stress proxy", summary["avg_stress_index"] * 100, "%", False, "synthetic: lower is better"),
+]
+for column, card in zip(st.columns(3), metrics[:3]):
+    column.markdown(metric_card(*card), unsafe_allow_html=True)
+for column, card in zip(st.columns(3), metrics[3:]):
+    column.markdown(metric_card(*card), unsafe_allow_html=True)
 
 overview, intelligence, readiness, assumptions = st.tabs(["Simulation overview", "AI & optimization", "Readiness & models", "Model transparency"])
 with overview:
@@ -109,11 +124,22 @@ with intelligence:
 
 with readiness:
     score, components = readiness_score()
+    st.subheader("Three-model decision layer")
+    model_columns = st.columns(3)
+    model_cards = [
+        ("MODEL 1", "#17b6a4", "Production prediction", "Random Forest surrogate maps CSS and SRP settings to synthetic average production. Retrain with approved historical production, CSS and lift records."),
+        ("MODEL 2", "#ff6b5b", "Lift stress screening", "Uses viscosity, fillage proxy, SRP speed and stroke to highlight synthetic stress conditions. It is not a field failure forecast until validated on actual events."),
+        ("MODEL 3", "#8b7cf6", "Joint optimizer", "Searches bounded CSS and SRP combinations for simulated economics while applying a synthetic lift-stress penalty."),
+    ]
+    for column, (tag, colour, title, text) in zip(model_columns, model_cards):
+        column.markdown(f'<div class="model-card"><span class="model-tag" style="background:{colour}26;color:{colour}">{tag}</span><h3>{title}</h3><p>{text}</p></div>', unsafe_allow_html=True)
+    st.divider()
+    st.subheader("Feasibility and deployment readiness")
     left, right = st.columns([1, 2])
     with left:
-        st.metric("Prototype readiness", f"{score}%")
-        st.caption("A transparent maturity estimate—not a probability that field deployment will succeed.")
-        st.progress(score)
+        tone = "green" if score >= 70 else "amber" if score >= 45 else "red"
+        label = "Field-pilot ready" if score >= 70 else "Prototype-stage" if score >= 45 else "Needs validation"
+        st.markdown(f'<div class="feasibility-card"><div class="metric-label">PROTOTYPE READINESS</div><div class="metric-value">{score}%</div><span class="badge {tone}">{label}</span><p>This is a transparent maturity estimate—not a probability of field success.</p></div>', unsafe_allow_html=True)
     with right:
         readiness_frame = pd.DataFrame({"Area": list(components), "Readiness": list(components.values())})
         readiness_chart = px.bar(readiness_frame, x="Readiness", y="Area", orientation="h", range_x=[0, 100], title="What determines feasibility", template="plotly_dark", color="Readiness", color_continuous_scale=["#ff6961", "#f3a847", "#17b6a4"])
